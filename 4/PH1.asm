@@ -10,6 +10,7 @@ STACK SEGMENT USE16 PARA STACK 'STACK'
 STACK ENDS
 
 DATA SEGMENT USE16
+	STACKBAK DB 400 DUP(0);定义一个堆栈用作切换
 	BNAME DB 'peihan',0 ;老板姓名
 	BPASS DB 'test',0,0,0;密码
 	SHOPNAME DB 0AH,0DH,'------SHOP--------','$'
@@ -46,6 +47,7 @@ DATA SEGMENT USE16
 	PROJECT2 DB 'Load price: $';进货价
 	PROJECT3 DB 'Buy Price: $';销售价
 	PROJECT4 DB 'Quantity of incoming goods: $';进货总数
+	ENVIR	DB	'Migration environment!','$'
 	;输入缓存区定义
 	InName 	DB 80
 			DB 0
@@ -70,6 +72,100 @@ DATA ENDS
 
 CODE SEGMENT USE16
 ASSUME CS:CODE,DS:DATA,SS:STACK
+
+;新的NEW08H用到的变量
+	COUNT DB 18;计数18次为1秒
+	SEC DB ?,?;存放秒的ASCII码
+	OLD_INT DW ?,?;原INT 08H的中断矢量
+	DIREC DB 0;切换堆栈的方向标记,0->STACKBAK,1->STACK
+	SETFLAG DB 0;安装中断的标记,1表示已经安装
+
+;新的INT 08H的代码
+NEW08H PROC FAR
+		PUSHF	;送进标志位,因为用CALL,而IRET弹出三个栈元素
+		CALL DWORD PTR CS:OLD_INT;完成原功能
+		DEC CS:COUNT	;倒计时
+		JZ SCHANGE;18次为1秒,18次后考虑可能要切换堆栈了
+		IRET ;未计满就中断返回
+	
+SCHANGE:	;已经过了1秒,可能切换堆栈的情况
+		MOV CS:COUNT,0;重置计数器
+		CALL GET_TIME
+		CMP SEC,3430H;比较是不是40秒
+		JNE EXIT08H;不相等就退出08H
+		;相等的话就进行堆栈的切换
+		STI	;开中断
+		PUSHA	;保护现场
+		PUSH DS
+		PUSH ES
+		MOV AX,CS	;将DS、ES指向CS
+		MOV DS,AX
+		MOV ES,AX
+		CMP CS:DIREC,0;判断切换的方向
+		JE CHANGEBAK;STACK->STACKBAK
+		
+CHANGESTACK:	;STACKBAK->STACK
+;MOVSB 的英文是 move string byte，意思是搬移一个字节，
+;它是把 DS:SI 所指地址的一个字节搬移到 ES:DI 所指的地址上
+	; MOV CX ,100
+	; LEA SI,FIRST
+	; LEA DI,SECOND
+	; CLD 正向移位
+	; REP MOVSB
+	; 以上程序段的功能是从缓冲区FIRST传送100个字节到SECOND缓冲区.
+		;利用MOVSB指令复制
+		MOV AX,DATA
+		MOV DS,AX	;设置搬运的起始地址DS:SI
+		MOV SI,OFFSET STACKBAK
+		MOV AX,STACK
+		MOV ES,AX	;设置搬运的目的地址ES:DI
+		MOV SS,AX;新的栈基址
+		MOV DI,0
+		MOV CX,400;设置传送字节数
+		CLD	;正向传播
+		REP MOVSB
+		MOV BYTE PTR CS:DIREC,0;改变方向
+		JMP EXIT08H2
+	
+CHANGEBAK:	;STACK->STACKBAK
+		MOV AX,STACK;设置起始地址DS:SI
+		MOV DS,AX
+		MOV SI,0
+		MOV AX,DATA
+		MOV AX,SS	;新的栈基址
+		MOV ES,AX;设置目的地址ES:DI
+		MOV CX,400;设置传送字节数
+		CLD;正向传播
+		REP MOVSB
+		MOV BYTE PTR CS:DIREC,1;改变方向
+		JMP EXIT08H2
+
+EXIT08H2:
+		POP ES
+		POP DS
+		POPA;恢复现场
+		IRET
+	
+EXIT08H:	;退出08H
+		;POP AX;恢复现场
+		IRET;返回
+		
+;取时间子程序,从RT/COMAS RAM中取得秒到SEC中
+GET_TIME PROC
+		PUSH AX;保护现场
+		MOV AL,0;0是秒的偏移地址
+		OUT 70H,AL;向70H写入秒的偏移地址
+		JMP $+2	;延时
+		IN AL,71H;把秒信息放置AL中
+		MOV AH,AL;转换成对应的ASCII码
+		AND AL,0FH
+		SHR AH,4
+		ADD AX,3030H
+		XCHG AH,AL
+		MOV WORD PTR CS:SEC,AX;保存到秒变量的2个字节中
+		POP AX;恢复现场
+		RET 
+GET_TIME ENDP
 
 START: 	MOV AX,DATA
 		MOV DS,AX
@@ -368,14 +464,33 @@ FUNCSIX:
 		CALL F6
 		JMP MENU
 		
-FUNCSEN:
+FUNCSEN:;迁移工作环境，切换堆栈
+		PUSH CS
+		POP DS
+		CMP SETFLAG,1
+		JE F7;已经被安装
+		MOV AX,3508H;取出中断向量，放在ES:BX中
+		INT 21H
+		MOV CS:OLD_INT,BX
+		MOV CS:OLD_INT,ES
+		MOV DX,OFFSET NEW08H;迁移程序DS:DX
+		MOV AX,2508H
+		INT 21H
+		MOV BYTE PTR CS:SETFLAG,1;设置安装标记
+		CRLF
+		WRITE ENVIR
+		CRLF
+F7:
+		MOV AX,DATA
+		MOV DS,AX;恢复DS
 		JMP MENU
 		
 FUNCEIG:;显示当前代码段首址
 		MOV DI,OFFSET ADDRESS
 		ADD DI,3	;地址变到第四位，倒着放
 		MOV CL,4
-		MOV AX,CS
+		;MOV AX,CS
+		MOV AX,SS
 		MOV SI,4
 		MOV BX,OFFSET TAB
 TRANSLATE:
