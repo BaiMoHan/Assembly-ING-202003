@@ -12,15 +12,23 @@ STACK ENDS
 DATA SEGMENT USE16
 	STACKBAK DB 400 DUP(0);定义一个堆栈用作切换
 	BNAME DB 'peihan',0 ;老板姓名
-	BPASS DB 'test',0,0,0;密码
+	BPASS DB 't' XOR 'M'
+			 'e' XOR 'M' 
+			 's' XOR 'M'
+			 't' XOR 'M';密码与M异或
+			0A5H,0D8H,0C5H;填充随机数,防止猜到密码位数
+	OLDINT1 DW  0,0               ;1号中断的原中断矢量（用于中断矢量表反跟踪）
+	OLDINT3 DW  0,0               ;3号中断的原中断矢量
+	
+		
 	SHOPNAME DB 0AH,0DH,'------SHOP--------','$'
 	AUTH DB 0 ;当前登录状态,0表示顾客状态
-	N EQU 10
+	N EQU 3
 	M EQU 10000
 	;提示信息
 	TAB	DB '0123456789ABCDEF'
 	ADDRESS DB '0000','$'
-	ADDTEXT DB 0AH,0DH,'The CS address is',0AH,0DH,'$'
+	ADDTEXT DB 0AH,0DH,'The SS address is',0AH,0DH,'$'
 	NameText DB 0AH,0DH,'Please enter your username ', '$'
 	PassText DB 0AH,0DH,'Please enter your password ', '$'
 	CountText DB 0AH,0DH,'Compute successfully ','$'
@@ -60,14 +68,15 @@ DATA SEGMENT USE16
 			DB 0
 			DB 80 DUP(0)
 	Good 	DW 0
+	;商品进货价与B异或加密
 	Good1	DB 'pen',0DH,6 DUP(0),10;商品名称及折扣
-			DW 35,56,70,25,?	;推荐度未计算
+			DW 35 XOR 'B',56,70,25,?	;推荐度未计算
 	Good2	DB 'bag',0DH,6 DUP(0),10;商品名称及折扣
-			DW 35,56,70,25,?	;推荐度未计算
+			DW 35 XOR 'B',56,70,25,?	;推荐度未计算
 	Good3	DB 'book',0DH,5 DUP(0),9;
-			DW 12,30,25,5,?
+			DW 12 XOR 'B',30,25,5,?
 	;除了2个已经具体定义了的商品信息以外，其他商品信息暂时假定为一样的
-	GOODN	DB N-3 DUP('TempValue',0DH,8,15,0,20,0,30,0,2,0,?,?)
+	;GOODN	DB N-3 DUP('TempValue',0DH,8,15,0,20,0,30,0,2,0,?,?)
 DATA ENDS
 
 CODE SEGMENT USE16
@@ -75,7 +84,7 @@ ASSUME CS:CODE,DS:DATA,SS:STACK
 
 ;新的NEW08H用到的变量
 	COUNT DB 18;计数18次为1秒
-	SEC DB ?,?;存放秒的ASCII码
+	SEC DW ? ;存放40秒的ASCII码
 	OLD_INT DW ?,?;原INT 08H的中断矢量
 	DIREC DB 0;切换堆栈的方向标记,0->STACKBAK,1->STACK
 	SETFLAG DB 0;安装中断的标记,1表示已经安装
@@ -87,24 +96,28 @@ NEW08H PROC FAR
 		DEC CS:COUNT	;倒计时
 		JZ SCHANGE;18次为1秒,18次后考虑可能要切换堆栈了
 		IRET ;未计满就中断返回
+UNCHANGE:
+		IRET
 	
 SCHANGE:	;已经过了1秒,可能切换堆栈的情况
-		MOV CS:COUNT,0;重置计数器
+		MOV CS:COUNT,18;重置计数器
+		STI ;开中断
 		CALL GET_TIME
-		CMP SEC,3430H;比较是不是40秒
-		JNE EXIT08H;不相等就退出08H
+		CMP CS:SEC,3430H
+		JNE UNCHANGE;不相等就退出08H
 		;相等的话就进行堆栈的切换
 		STI	;开中断
-		PUSHA	;保护现场
+				;INT 3
+		PUSHA
 		PUSH DS
 		PUSH ES
 		MOV AX,CS	;将DS、ES指向CS
 		MOV DS,AX
 		MOV ES,AX
 		CMP CS:DIREC,0;判断切换的方向
-		JE CHANGEBAK;STACK->STACKBAK
+		JE ToSTACKBAK;STACK->STACKBAK
 		
-CHANGESTACK:	;STACKBAK->STACK
+ToSTACK:	;STACKBAK->STACK
 ;MOVSB 的英文是 move string byte，意思是搬移一个字节，
 ;它是把 DS:SI 所指地址的一个字节搬移到 ES:DI 所指的地址上
 	; MOV CX ,100
@@ -119,36 +132,39 @@ CHANGESTACK:	;STACKBAK->STACK
 		MOV SI,OFFSET STACKBAK
 		MOV AX,STACK
 		MOV ES,AX	;设置搬运的目的地址ES:DI
-		MOV SS,AX;新的栈基址
+		MOV SS,AX;新的栈基址为STACK
 		MOV DI,0
 		MOV CX,400;设置传送字节数
 		CLD	;正向传播
 		REP MOVSB
+		CALL EIGHT
 		MOV BYTE PTR CS:DIREC,0;改变方向
-		JMP EXIT08H2
+		JMP EXIT08H
 	
-CHANGEBAK:	;STACK->STACKBAK
+ToSTACKBAK:	;STACK->STACKBAK
 		MOV AX,STACK;设置起始地址DS:SI
 		MOV DS,AX
 		MOV SI,0
 		MOV AX,DATA
-		MOV AX,SS	;新的栈基址
+		MOV SS,AX	;新的栈基址为DATA
 		MOV ES,AX;设置目的地址ES:DI
+		MOV DI,OFFSET STACKBAK
 		MOV CX,400;设置传送字节数
 		CLD;正向传播
 		REP MOVSB
+		MOV AX,DATA
+		MOV DS,AX;恢复DS->DATA
+		CALL EIGHT
 		MOV BYTE PTR CS:DIREC,1;改变方向
-		JMP EXIT08H2
+		
+		JMP EXIT08H
 
-EXIT08H2:
+EXIT08H:
 		POP ES
 		POP DS
 		POPA;恢复现场
 		IRET
-	
-EXIT08H:	;退出08H
-		;POP AX;恢复现场
-		IRET;返回
+NEW08H ENDP
 		
 ;取时间子程序,从RT/COMAS RAM中取得秒到SEC中
 GET_TIME PROC
@@ -169,6 +185,27 @@ GET_TIME ENDP
 
 START: 	MOV AX,DATA
 		MOV DS,AX
+
+		XOR  AX,AX                  ;接管调试用中断，中断矢量表反跟踪
+		MOV  ES,AX
+		MOV  AX,ES:[1*4]            ;保存原1号和3号中断矢量
+		MOV  OLDINT1,AX
+		MOV  AX,ES:[1*4+2]
+		MOV  OLDINT1+2,AX
+		MOV  AX,ES:[3*4]
+		MOV  OLDINT3,AX
+		MOV  AX,ES:[3*4+2]
+		MOV  OLDINT3+2,AX
+		CLI                           ;设置新的中断矢量
+		MOV  AX,OFFSET NEWINT
+		MOV  ES:[1*4],AX
+		MOV  ES:[1*4+2],CS
+		MOV  ES:[3*4],AX
+		MOV  ES:[3*4+2],CS
+		STI
+NEWINT: IRET
+;TESTINT: JMP PASS4
+
 
 MENU:	;输出菜单信息
 		WRITE SHOPNAME
@@ -213,7 +250,6 @@ FUNCONE:
 		LEA DX,InName
 		MOV AH,10
 		INT 21H
-		INT 3
 		CMP InName+1,030H;判断是否仅仅输入回车
 		JE BACKMENU
 		JMP NAMECHECK
@@ -232,7 +268,7 @@ LOOPNAME:
 		JE	PASSCHECK	;检查密码
 		JMP BACKMENU
 
-PASSCHECK:	;检查输入的姓名
+PASSCHECK:	;检查输入的密码
 		LEA DX,PassText	;提示用户输入密码
 		MOV AH,9
 		INT 21H
@@ -241,14 +277,41 @@ PASSCHECK:	;检查输入的姓名
 		INT 21H
 		MOV SI,0	;采用变址寻址
 		MOV CL,InPass+1;采用输入串的长度作为循环次数
+		CMP CL,7;用7来混淆密码长度
+		JA MENU;大于7就跳转菜单
 LOOPPASS:
+
+		;增加计时检查,（CX）:（DX）=日期
+		PUSH DX;保护DX
+		PUSH CX;保护CX
+		CLI                   ;计时反跟踪开始 
+		MOV  AH,2CH 
+		INT  21H
+		POP CX;恢复CX
+		PUSH DX               ;保存获取的秒和百分秒
+
+
 		MOV BL,BPASS[SI]
+		XOR BL,'M';异或与输入比较
 		CMP BL,InPass[SI+2]
 		JNE FAILPASS
 		INC SI
 		DEC CL	;循环计数减1
+		
+		PUSH CX;保护CX
+		MOV  AH,2CH                 ;获取第二次秒与百分秒
+		INT  21H
+		STI
+		POP CX;恢复CX
+		CMP  DX,[ESP]               ;计时是否相同
+		POP  DX
+		POP DX ;恢复DX
+		JNZ  MENU                    ;如果计时不相同，通过本次计时反跟踪   
+		;MOV  BX,OFFSET E1           ;如果计时不同，则把转移地址偏离P1
+
+		OR CL,CL;获取标志位
 		JNZ LOOPPASS
-		CMP BPASS[SI],0	;看下一位是否为0
+		CMP BPASS[SI],0A5H	;看下一位是否为0A5H随机数
 		JE	LOADSUC	;跳转到登录成功
 		JMP BACKMENU
 		
@@ -378,6 +441,7 @@ CACLCULATE:
 		DIV EBX;折扣之后的实际价格
 		MOV ECX,EAX;实际价格存到CX中
 		MOVZX EAX,WORD PTR [SI+11];AX此时为进货价格
+		XOR EAX,'B';恢复进货价
 		;MOV BX,128;128存到BX中，等待与进货价格相乘
 		;MUL BX
 		SAL EAX,7
@@ -430,6 +494,7 @@ LOPCALCULATE:
 		DIV BX;此时AX为实际销售价格
 		MOV CX,AX;CX为实际销售价格
 		MOV AX,[SI]+11;AX为进货价
+		XOR AX,'B';恢复进货价
 		MOV BX,128
 		MUL BX 
 		MOV DX,0
@@ -472,20 +537,26 @@ FUNCSEN:;迁移工作环境，切换堆栈
 		MOV AX,3508H;取出中断向量，放在ES:BX中
 		INT 21H
 		MOV CS:OLD_INT,BX
-		MOV CS:OLD_INT,ES
+		MOV CS:OLD_INT+2,ES
 		MOV DX,OFFSET NEW08H;迁移程序DS:DX
 		MOV AX,2508H
 		INT 21H
 		MOV BYTE PTR CS:SETFLAG,1;设置安装标记
 		CRLF
+		MOV AX,DATA
+		MOV DS,AX
 		WRITE ENVIR
-		CRLF
 F7:
 		MOV AX,DATA
 		MOV DS,AX;恢复DS
 		JMP MENU
 		
 FUNCEIG:;显示当前代码段首址
+		CALL EIGHT
+		JMP MENU
+EIGHT PROC
+		PUSHA	;保护现场
+		PUSHAD
 		MOV DI,OFFSET ADDRESS
 		ADD DI,3	;地址变到第四位，倒着放
 		MOV CL,4
@@ -511,9 +582,32 @@ TRANSLATE:
 		LEA DX,ADDRESS
 		MOV AH,9
 		INT 21H
-		JMP MENU
+		POPAD	;恢复现场
+		POPA
+		RET
+EIGHT	ENDP
+		
 
 FUNCNIN:	
+	;LDS reg,mem
+	;这条指令的功能是把mem指向的百地址,
+	;高位存放在DS中度,低位存放在reg中.
+		LDS DX,DWORD PTR OLD_INT;取出原来的08H中断矢量
+		MOV AX,2508H
+		INT 21H;恢复原08H中断矢量
+		
+	CLI      ;还原1,3号中断矢量
+	MOV  AX,OLDINT1
+	MOV  ES:[1*4],AX
+	MOV  AX,OLDINT1+2
+	MOV  ES:[1*4+2],AX
+	MOV  AX,OLDINT3
+	MOV  ES:[3*4],AX
+	MOV  AX,OLDINT3+2
+	MOV  ES:[3*4+2],AX 
+	STI
+
+		
 		;结束程序
 		MOV AH,4CH
 		INT 21H
