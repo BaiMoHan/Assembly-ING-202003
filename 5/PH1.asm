@@ -12,10 +12,10 @@ STACK ENDS
 DATA SEGMENT USE16
 	STACKBAK DB 400 DUP(0);定义一个堆栈用作切换
 	BNAME DB 'peihan',0 ;老板姓名
-	BPASS DB 't' XOR 'M'
-			 'e' XOR 'M' 
-			 's' XOR 'M'
-			 't' XOR 'M';密码与M异或
+	BPASS DB 't' XOR 'M',
+			 'e' XOR 'M',
+			 's' XOR 'M',
+			 't' XOR 'M',;密码与M异或
 			0A5H,0D8H,0C5H;填充随机数,防止猜到密码位数
 	OLDINT1 DW  0,0               ;1号中断的原中断矢量（用于中断矢量表反跟踪）
 	OLDINT3 DW  0,0               ;3号中断的原中断矢量
@@ -77,6 +77,17 @@ DATA SEGMENT USE16
 			DW 12 XOR 'B',30,25,5,?
 	;除了2个已经具体定义了的商品信息以外，其他商品信息暂时假定为一样的
 	;GOODN	DB N-3 DUP('TempValue',0DH,8,15,0,20,0,30,0,2,0,?,?)
+	
+			;代码段动态生成地址表
+	; ADDFUNC DW FUNCONE,
+			; DW FUNCTWO,
+			; DW FUNCTHR,
+			; DW FUNCFOU,
+			; DW FUNCFIV,
+			; DW FUNCSIX,
+			; DW FUNCSEN,
+			; DW FUNCEIG,
+			; DW FUNCNIN
 DATA ENDS
 
 CODE SEGMENT USE16
@@ -203,8 +214,7 @@ START: 	MOV AX,DATA
 		MOV  ES:[3*4],AX
 		MOV  ES:[3*4+2],CS
 		STI
-NEWINT: IRET
-;TESTINT: JMP PASS4
+
 
 
 MENU:	;输出菜单信息
@@ -383,6 +393,7 @@ GOODCMP:
 		CRLF;输出换行
 		WRITE PROJECT2;进货价
 		MOV AX,[SI+11]
+		XOR AX,'B';恢复进货价
 		MOV DX,16
 		CALL F2T10
 		CRLF
@@ -611,7 +622,8 @@ FUNCNIN:
 		;结束程序
 		MOV AH,4CH
 		INT 21H
-		
+NEWINT: IRET
+;TESTINT: JMP PASS4		
 
 ;时间计数器(ms),在屏幕上显示程序的执行时间(ms)
 ;使用方法:

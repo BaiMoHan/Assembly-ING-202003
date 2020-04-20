@@ -20,7 +20,7 @@ DATA SEGMENT USE16
 	;提示信息
 	TAB	DB '0123456789ABCDEF'
 	ADDRESS DB '0000','$'
-	ADDTEXT DB 0AH,0DH,'The CS address is',0AH,0DH,'$'
+	ADDTEXT DB 0AH,0DH,'The SS address is',0AH,0DH,'$'
 	NameText DB 0AH,0DH,'Please enter your username ', '$'
 	PassText DB 0AH,0DH,'Please enter your password ', '$'
 	CountText DB 0AH,0DH,'Compute successfully ','$'
@@ -75,7 +75,7 @@ ASSUME CS:CODE,DS:DATA,SS:STACK
 
 ;新的NEW08H用到的变量
 	COUNT DB 18;计数18次为1秒
-	SEC DB ?,?;存放秒的ASCII码
+	SEC DW ? ;存放40秒的ASCII码
 	OLD_INT DW ?,?;原INT 08H的中断矢量
 	DIREC DB 0;切换堆栈的方向标记,0->STACKBAK,1->STACK
 	SETFLAG DB 0;安装中断的标记,1表示已经安装
@@ -87,24 +87,28 @@ NEW08H PROC FAR
 		DEC CS:COUNT	;倒计时
 		JZ SCHANGE;18次为1秒,18次后考虑可能要切换堆栈了
 		IRET ;未计满就中断返回
+UNCHANGE:
+		IRET
 	
 SCHANGE:	;已经过了1秒,可能切换堆栈的情况
-		MOV CS:COUNT,0;重置计数器
+		MOV CS:COUNT,18;重置计数器
+		STI ;开中断
 		CALL GET_TIME
-		CMP SEC,3430H;比较是不是40秒
-		JNE EXIT08H;不相等就退出08H
+		CMP CS:SEC,3430H
+		JNE UNCHANGE;不相等就退出08H
 		;相等的话就进行堆栈的切换
 		STI	;开中断
-		PUSHA	;保护现场
+				INT 3
+		PUSHA
 		PUSH DS
 		PUSH ES
 		MOV AX,CS	;将DS、ES指向CS
 		MOV DS,AX
 		MOV ES,AX
 		CMP CS:DIREC,0;判断切换的方向
-		JE CHANGEBAK;STACK->STACKBAK
+		JE ToSTACKBAK;STACK->STACKBAK
 		
-CHANGESTACK:	;STACKBAK->STACK
+ToSTACK:	;STACKBAK->STACK
 ;MOVSB 的英文是 move string byte，意思是搬移一个字节，
 ;它是把 DS:SI 所指地址的一个字节搬移到 ES:DI 所指的地址上
 	; MOV CX ,100
@@ -119,36 +123,39 @@ CHANGESTACK:	;STACKBAK->STACK
 		MOV SI,OFFSET STACKBAK
 		MOV AX,STACK
 		MOV ES,AX	;设置搬运的目的地址ES:DI
-		MOV SS,AX;新的栈基址
+		MOV SS,AX;新的栈基址为STACK
 		MOV DI,0
 		MOV CX,400;设置传送字节数
 		CLD	;正向传播
 		REP MOVSB
+		CALL EIGHT
 		MOV BYTE PTR CS:DIREC,0;改变方向
-		JMP EXIT08H2
+		JMP EXIT08H
 	
-CHANGEBAK:	;STACK->STACKBAK
+ToSTACKBAK:	;STACK->STACKBAK
 		MOV AX,STACK;设置起始地址DS:SI
 		MOV DS,AX
 		MOV SI,0
 		MOV AX,DATA
-		MOV AX,SS	;新的栈基址
+		MOV SS,AX	;新的栈基址为DATA
 		MOV ES,AX;设置目的地址ES:DI
+		MOV DI,OFFSET STACKBAK
 		MOV CX,400;设置传送字节数
 		CLD;正向传播
 		REP MOVSB
+		MOV AX,DATA
+		MOV DS,AX;恢复DS->DATA
+		CALL EIGHT
 		MOV BYTE PTR CS:DIREC,1;改变方向
-		JMP EXIT08H2
+		
+		JMP EXIT08H
 
-EXIT08H2:
+EXIT08H:
 		POP ES
 		POP DS
 		POPA;恢复现场
 		IRET
-	
-EXIT08H:	;退出08H
-		;POP AX;恢复现场
-		IRET;返回
+NEW08H ENDP
 		
 ;取时间子程序,从RT/COMAS RAM中取得秒到SEC中
 GET_TIME PROC
@@ -213,7 +220,6 @@ FUNCONE:
 		LEA DX,InName
 		MOV AH,10
 		INT 21H
-		INT 3
 		CMP InName+1,030H;判断是否仅仅输入回车
 		JE BACKMENU
 		JMP NAMECHECK
@@ -472,20 +478,26 @@ FUNCSEN:;迁移工作环境，切换堆栈
 		MOV AX,3508H;取出中断向量，放在ES:BX中
 		INT 21H
 		MOV CS:OLD_INT,BX
-		MOV CS:OLD_INT,ES
+		MOV CS:OLD_INT+2,ES
 		MOV DX,OFFSET NEW08H;迁移程序DS:DX
 		MOV AX,2508H
 		INT 21H
 		MOV BYTE PTR CS:SETFLAG,1;设置安装标记
 		CRLF
+		MOV AX,DATA
+		MOV DS,AX
 		WRITE ENVIR
-		CRLF
 F7:
 		MOV AX,DATA
 		MOV DS,AX;恢复DS
 		JMP MENU
 		
 FUNCEIG:;显示当前代码段首址
+		CALL EIGHT
+		JMP MENU
+EIGHT PROC
+		PUSHA	;保护现场
+		PUSHAD
 		MOV DI,OFFSET ADDRESS
 		ADD DI,3	;地址变到第四位，倒着放
 		MOV CL,4
@@ -511,9 +523,19 @@ TRANSLATE:
 		LEA DX,ADDRESS
 		MOV AH,9
 		INT 21H
-		JMP MENU
+		POPAD	;恢复现场
+		POPA
+		RET
+EIGHT	ENDP
+		
 
 FUNCNIN:	
+	;LDS reg,mem
+	;这条指令的功能是把mem指向的百地址,
+	;高位存放在DS中度,低位存放在reg中.
+		LDS DX,DWORD PTR OLD_INT;取出原来的08H中断矢量
+		MOV AX,2508H
+		INT 21H;恢复原08H中断矢量
 		;结束程序
 		MOV AH,4CH
 		INT 21H
