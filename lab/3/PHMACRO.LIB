@@ -1,0 +1,44 @@
+;宏库PHMACRO.LIB
+READ MACRO A
+	;10号系统功能调用,读取输入的串
+	LEA DX,A
+	MOV AH,10
+	INT 21H
+	ENDM
+
+WRITE MACRO A
+	;9号系统功能调用,输出字符串
+	LEA DX,A
+	MOV AH,9
+	INT 21H
+	ENDM
+
+CRLF MACRO
+	;输出回车换行
+	MOV AH,2
+	MOV DL,0AH
+	INT 21H
+	MOV DL,0DH
+	INT 21H
+	ENDM
+	
+IN1 MACRO 
+	;1号功能调用,输入一个字符->AL
+	MOV AH,1
+	INT 21H
+	ENDM
+
+OUT1 MACRO A
+	;2号系统功能调用,输出DL一个字符
+	MOV DL,A 
+	MOV AH,2
+	INT 21H
+	ENDM
+	
+STACK0 MACRO A 
+	;定义堆栈
+STACK SEGMENT USE16 PARA STACK 'STACK'
+	DB A 
+STACK ENDS
+	ENDM
+	
