@@ -1,0 +1,120 @@
+;P187例题5.10
+;子模块DUMP
+;功能：将全部16/32位数据寄存器的内容按有符号十进制数的形式分8行输出
+;入口参数：各寄存器的内容
+;出口参数：各寄存器的入口值不变
+;所使用的寄存器和主要变量
+;EAX——保存待分解的数
+;DX——按除法指令和系统功能调用的规定使用
+;DI——取寄存器名缓冲区指针，初值为STR1
+;SI——送分解出的十进制ASCII码指针，初值为BUF1
+;EBX——RADIX子程序的入口参数，存放待分解的进制参数
+;CX——RADIX子程序的入口参数，存放待分解出的数字位数计数器
+;STR1——寄存器名字符串存储区首址
+;BUF1——输出缓存区首址
+;REG——临时保存待输出寄存器的内容
+;REG_BIT——显示16/32位寄存器标志;
+		PUBLIC DUMP
+.386
+WRITE 	MACRO A
+		LEA DX,A
+		MOV AH,9
+		INT 21H
+		ENDM
+
+DATA SEGMENT USE16 PARA PUBLIC 'DATA'
+STR1	DB	'(EDI)=$',' (DI)=$';注意中间有个空格，第二个串长度为7
+		DB	'(ESI)=$',' (SI)=$'
+		DB	'(EBP)=$',' (BP)=$'
+		DB	'(ESP)=$',' (SP)=$'
+		DB	'(EBX)=$',' (BX)=$'
+		DB	'(EDX)=$',' (DX)=$'
+		DB	'(ECX)=$',' (CX)=$'
+		DB	'(EAX)=$',' (AX)=$'
+		;PUSHAD指令压入32位寄存器
+		;其入栈顺序是:EAX,ECX,EDX,EBX,ESP,EBP,ESI,EDI 
+		;所以上面STR1要逆着来
+BUF1	DB	20 DUP(0)
+CRLF	DB	0AH,0DH,'$';回车换行
+REG		DD	0;保存从堆栈中弹出待输出寄存器的内容
+REG_BIT	DB	0;显示16/32位寄存器标志
+DATA	ENDS
+CODE	SEGMENT	USE16 PARA PUBLIC 'CODE'
+		ASSUME DS:DATA,CS:CODE
+DUMP	PROC FAR
+		PUSHF;将标志寄存器的值压栈
+		PUSH DS
+		PUSHAD
+		PUSHAD ;保护所有32为寄存器的内容，压两次
+		MOV AX,DATA
+		MOV DS,AX
+		MOV BP,8
+		MOV DI,OFFSET STR1;DI指向STR1串
+NEW_LINE:
+		MOV REG_BIT,32;首先置位显示32位寄存器标志
+		POP EAX;弹出值放入EAX
+		MOV REG,EAX;保存EAX的值
+ENCODE:
+		LEA SI,BUF1;SI为输出缓存区首址
+		CMP REG_BIT,32;判断是否为32位显示器
+		JNE BIT_16;不是32位的，就跳转显示16位寄存器的内容处
+		OR EAX,EAX;用来判断是否为负,负数需要处理后再显示
+		JNS PLUS;不为负就跳转到正数处理
+		NEG EAX;将负数变为正数
+		MOV BYTE PTR [SI],'-';送上高位的负号
+		INC SI;缓存区移到下一位
+		JMP PLUS;负数变成正数后就按照正数的显示来处理
+BIT_16:
+		OR AX,AX;判断AX是否为负，负数需要处理后再显示
+		JNS B1;不是负数就跳转到B1正数处理16位的
+		NEG AX;将负数变为正数
+		MOV BYTE PTR [SI],'-';送上高位的负号
+		INC SI;缓存区移到下一位
+B1:		MOVZX EAX,AX;将16位无符号数拓展为32位送至EAX
+PLUS:	
+		MOV EBX,10;RADIX子程序的入口参数，存放待分解的进制基数
+		CALL RADIX;将EAX中的无符号二进制转为10进制ASCII码->BUF1
+SPACE:
+		CMP SI,18+OFFSET BUF1;确认RADIX输出后SI是否移动到了第19位处
+		JE PP;移动到了第19位处就跳转
+		MOV BYTE PTR [SI],' ';不足18位的就补充空格,32位转10进制最多不超过18位
+		INC SI;SI自增
+		JMP SPACE;执行SPACE循环
+PP:
+		MOV BYTE PTR [SI],'$';该串末尾补'$'
+		WRITE [DI];输出（XXX）=，长度为7字节(包括'$')
+		ADD DI,7;DI+7即移动到下一个前置信息地址处
+		WRITE BUF1;显示RADIX子程序分解出的字符串
+		CMP REG_BIT,16;当前输出的是16位寄存器的吗
+		JE LINE_END;输出16位的后就是一行的结束了
+		MOV EAX,REG;不是输出16位的就将开始保存的内容返给EAX
+		MOV REG_BIT,16;显示16位寄存器的内容标志置位
+		JMP ENCODE
+LINE_END:
+		WRITE CRLF;输出回车换行
+		DEC BP;修改循环变量
+		JZ ALL_END;全部显示完就结束
+		JMP NEW_LINE;否则继续显示后面的内容
+ALL_END:
+		POPAD;恢复各寄存器的初值
+		POP	DS;恢复DS寄存器
+		POPF;恢复各标志位的初值
+		RET;返回
+DUMP END;DUMP模块结束
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
